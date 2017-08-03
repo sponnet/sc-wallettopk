@@ -1,0 +1,202 @@
+<link rel="import" href="bower_components/polymer/polymer-element.html">
+<link rel="import" href="bower_components/paper-input/paper-input.html">
+<script src="./lightwallet.min.js"></script>
+
+<dom-module id="sc-wallettopk">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+    </style>
+
+    <h2>Hello Walletparser</h2>
+
+    <h3>1/ Enter password</h3>
+    <paper-input type="password" id="pwd" label="Wallet password"></paper-input>
+    <h3>2/ Upload file</h3>
+    <input type="file" on-change="loadvault">
+    <template is="dom-if" if="{{displayvaultdata}}">
+      <h3>3/ result</h3>
+      <pre>{{displayvaultdata}}</pre>
+    </template>
+
+  </template>
+
+  <script>
+    /**
+     * `sc-wallettopk`
+     * 
+     *
+     * @customElement
+     * @polymer
+     * @demo demo/index.html
+     */
+    class ScWallettopk extends Polymer.Element {
+      static get is() { return 'sc-wallettopk'; }
+      static get properties() {
+        return {
+        };
+      }
+
+      loadvault(e) {
+        var file = e.target.files[0];
+        if (!file) {
+          return;
+        }
+        var reader = new FileReader();
+        reader.onload = function(res) {
+          var contents = res.target.result;
+          this._parseVault(contents, this.$.pwd.value)
+            .then((vaultdata) => {
+              this.displayvaultdata = JSON.stringify(vaultdata,null,2);
+            })
+            .catch((err) => {
+              this.displayvaultdata = err;
+            });
+        }.bind(this);
+        reader.readAsText(file);
+      }
+
+      /**
+      * Parse vault data and unpack it
+      * @param {vaultdata} the vault string to verify
+      * @param {password} the password to decode the keys in the wallet
+      * @return {object} object containing identity, pubkey and privatekey
+      */       
+      _parseVault(vaultdata, password) {
+        return new Promise((resolve, reject) => {
+          if (!vaultdata || !password) {
+            reject(Error('no data provided'));
+          };
+          try {
+
+            if (this._isthisV1Backup(vaultdata)) {
+              vaultdata = JSON.parse(vaultdata);
+            } else {
+              // if the vaultdata is a string - it's probably an old wallet file
+              if (typeof vaultdata === 'string') {
+                vaultdata = this._convertWalletToVault(vaultdata);
+              }
+            }
+
+            if (!vaultdata) {
+              throw new Error('sc-vault: loadVault: vault is not defined.');
+            }
+
+            if (!vaultdata.type === 'sc-vault') {
+              throw new Error('sc-vault: loadVault: JSON format not recognized.');
+            }
+
+            switch (vaultdata.version) {
+              case 1:
+                var keystore = lightwallet.keystore.deserialize(vaultdata.keystore);
+                var addresses = keystore.getAddresses();
+                if (!addresses || addresses.length === 0) {
+                  throw new Error('sc-vault -> ERROR, no addresses found in vault.');
+                }
+                vaultdata.pubkey = this._fixaddress(addresses[0]);
+                this._exportPrivateKey(keystore,password,vaultdata.pubkey)
+                  .then((pk) => {
+                    vaultdata.privatekey = pk;
+                    resolve(vaultdata);
+                  })
+                  .catch((err) => {
+                    reject(Error(err));
+                  });
+                break;
+              default:
+                reject(Error('Vault version unknown', vaultdata.version));
+                break;
+            }
+          } catch (err) {
+            reject(Error(err));
+          }
+        });
+      }
+
+      /**
+      * Verifies if this string is a correct v1 backup file
+      * @param {content} the wallet string to verify
+      * @return {boolean} true if this is a correct wallet, false otherwise.
+      */      
+      _isthisV1Backup(content){
+        try{
+          var jsoncontent = JSON.parse(content);
+          if (jsoncontent.type && jsoncontent.type === 'sc-vault' && jsoncontent.version === 1){
+            return true;
+          }
+          return false;
+        }catch(e){
+          return false;
+        }
+      }
+
+      /**
+      * Converts a tokensale wallet file to a vault with default avatar
+      * @param {content} the wallet string to convert
+      * @return {object} sc-vault object
+      */
+      _convertWalletToVault(content){
+        var keystore = JSON.parse(content);
+        return ({
+          type: 'sc-vault',
+          version: 1,
+          keystore: keystore,
+          identity: {
+            version: 1,
+            username: 'nickname',
+            avatarhash: 'Qme5k7WUAoo5JwySiYGfhm4umvhUCTqVKPw2yfP7jhiqPT'
+          }
+        });
+      }
+
+      /**
+      * Prepends 0x to address if needed
+      * @param {address} the key string to clean up
+      * @return {string} correctly formatted public key
+      */
+      _fixaddress(address) {
+        if (!address) {
+          return;
+        }
+        function strStartsWith(str, prefix) {
+          return str.indexOf(prefix) === 0;
+        }
+        if (!strStartsWith(address, '0x')) {
+          return ('0x' + address);
+        }
+        return address;
+      }
+
+      /**
+      * Exports private key from keystore
+      * @param {keystore} the keystore holding the account info
+      * @param {password} password for the keystore
+      * @param {pubkey} the pubkey where to export the private key from
+      * @return {string} private key of the given public key
+      */
+      _exportPrivateKey(keystore, password, pubkey) {
+        return new Promise((resolve, reject) => {
+          if (!password) {
+            reject(Error('no password set'));
+          }
+          keystore.keyFromPassword(password, function(err, pwDerivedKey) {
+            if (err) {
+              return cb(err);
+            }
+            try{
+              var privatekey = keystore.exportPrivateKey(pubkey, pwDerivedKey);
+              resolve(privatekey);
+            }catch(e){
+              reject(Error(e));
+            }
+          });
+        });
+      }
+
+    }
+
+    window.customElements.define(ScWallettopk.is, ScWallettopk);
+  </script>
+</dom-module>
