@@ -183,7 +183,7 @@
           }
           keystore.keyFromPassword(password, function(err, pwDerivedKey) {
             if (err) {
-              return cb(err);
+              reject(Error(err));
             }
             try{
               var privatekey = keystore.exportPrivateKey(pubkey, pwDerivedKey);
